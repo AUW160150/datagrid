@@ -25,8 +25,10 @@ try:
 except ImportError:
     _OVERCLAW = False
 
-MODEL      = "gpt-4o"
-MAX_TOKENS = 16000
+MODEL          = "llama-3.3-70b-versatile"
+MODEL_OVERCLAW = "groq/llama-3.3-70b-versatile"   # litellm provider prefix
+MAX_TOKENS     = 16000
+GROQ_BASE      = "https://api.groq.com/openai/v1"
 
 # ---------------------------------------------------------------------------
 # System prompt
@@ -158,26 +160,34 @@ def run(input: dict) -> dict:
     user_prompt   = _build_user_prompt(input)
     patient_id    = input.get("patient_id", "UNKNOWN")
 
-    if _OVERCLAW:
-        raw = call_llm(
-            model=MODEL,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user",   "content": user_prompt},
-            ]
-        )
-    else:
-        from openai import OpenAI
-        client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
-        resp = client.chat.completions.create(
-            model=MODEL,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user",   "content": user_prompt},
-            ],
-            max_tokens=MAX_TOKENS,
-        )
-        raw = resp.choices[0].message.content
+    import time, re
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user",   "content": user_prompt},
+    ]
+    for attempt in range(6):
+        try:
+            if _OVERCLAW:
+                resp = call_llm(model=MODEL_OVERCLAW, messages=messages)
+                raw = resp.choices[0].message.content if hasattr(resp, "choices") else str(resp)
+            else:
+                from openai import OpenAI
+                client = OpenAI(api_key=os.environ["GROQ_API_KEY"], base_url=GROQ_BASE)
+                resp = client.chat.completions.create(
+                    model=MODEL, messages=messages, max_tokens=MAX_TOKENS,
+                )
+                raw = resp.choices[0].message.content
+            break
+        except Exception as e:
+            msg = str(e)
+            if "429" in msg or "rate_limit" in msg.lower() or "RateLimitError" in type(e).__name__:
+                # Extract suggested wait time from error message
+                match = re.search(r"try again in (\d+\.?\d*)s", msg)
+                wait = float(match.group(1)) + 2 if match else (2 ** attempt) * 10
+                print(f"  [Harmonization] Rate limit — waiting {wait:.0f}s (attempt {attempt+1}/6)...")
+                time.sleep(wait)
+            else:
+                raise
 
     # Parse JSON
     text = (raw or "").strip()

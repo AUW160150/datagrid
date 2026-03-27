@@ -19,7 +19,8 @@ try:
 except ImportError:
     _OVERCLAW = False
 
-MODEL = "gpt-4o-mini"
+MODEL      = "llama-3.1-8b-instant"
+GROQ_BASE  = "https://api.groq.com/openai/v1"
 
 MODALITY_WEIGHTS = {
     "clinical_note":    0.40,
@@ -120,9 +121,8 @@ def _call_model(system: str, user: str) -> str:
                 {"role": "user",   "content": user},
             ]
         )
-    # Fallback: direct OpenAI call
     from openai import OpenAI
-    client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+    client = OpenAI(api_key=os.environ["GROQ_API_KEY"], base_url=GROQ_BASE)
     resp = client.chat.completions.create(
         model=MODEL,
         messages=[

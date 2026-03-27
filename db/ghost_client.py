@@ -1,40 +1,60 @@
 """
 datagrid — Ghost DB Client
-Each pipeline run forks its own Ghost Postgres DB, uses it, then discards it.
-Wraps the Ghost CLI (ghost create / ghost connect / ghost delete).
-Falls back to in-memory dict if Ghost CLI is not installed.
+Each pipeline run creates its own ephemeral Ghost Postgres DB, uses it, discards it.
+
+Auth: GHOST_TOKEN env var (no browser login needed in scripts).
+CLI path: ~/.local/bin/ghost (installed locally, not globally).
+
+Workflow per run:
+  1. ghost create --name datagrid-<run_id> --wait --json  → get db_id
+  2. ghost connect <db_id>                                → get postgres connection string
+  3. psycopg2.connect(conn_string) + create tables       → use for cache/job store
+  4. ghost delete <db_id> --confirm                      → discard after output written
 """
 
 import json
 import os
 import subprocess
-import datetime
 import psycopg2
 import psycopg2.extras
+
+GHOST_BIN = os.path.expanduser("~/.local/bin/ghost")
 
 
 # ---------------------------------------------------------------------------
 # CLI helpers
 # ---------------------------------------------------------------------------
 
-def _ghost_cmd(*args, check=True):
-    """Run a ghost CLI command, return parsed JSON output."""
+def _ghost(*args, capture=True, check=True) -> str:
+    """Run ghost CLI with GHOST_TOKEN in env. Returns stdout as string."""
+    env = os.environ.copy()
+    # Ghost uses GHOST_TOKEN for non-interactive auth
+    ghost_token = os.getenv("GHOST_TOKEN", "")
+    if ghost_token:
+        env["GHOST_TOKEN"] = ghost_token
+
     result = subprocess.run(
-        ["ghost", *args, "--json"],
-        capture_output=True,
+        [GHOST_BIN, *args],
+        capture_output=capture,
         text=True,
+        env=env,
         check=check,
     )
-    if result.returncode != 0:
-        raise RuntimeError(f"ghost {' '.join(args)} failed: {result.stderr.strip()}")
-    return json.loads(result.stdout.strip()) if result.stdout.strip() else {}
+    return result.stdout.strip() if capture else ""
 
 
-def _ghost_available():
+def _ghost_available() -> bool:
+    return os.path.isfile(GHOST_BIN)
+
+
+def _ghost_authed() -> bool:
+    """Check if Ghost CLI is available and authenticated."""
+    if not _ghost_available():
+        return False
     try:
-        subprocess.run(["ghost", "--version"], capture_output=True, check=True)
+        _ghost("list", "--json")
         return True
-    except (FileNotFoundError, subprocess.CalledProcessError):
+    except subprocess.CalledProcessError:
         return False
 
 
@@ -44,16 +64,18 @@ def _ghost_available():
 
 class GhostDB:
     """
-    Represents one ephemeral Ghost Postgres DB for a single pipeline run.
+    One ephemeral Ghost Postgres DB per pipeline run.
+
     Usage:
-        db = GhostDB.fork(run_id)
+        db = GhostDB.create(run_id)
         db.write_cache(patient_id, stage, data)
-        result = db.read_cache(patient_id, stage)
-        db.write_job(job_id, status_dict)
-        db.discard()
+        cached = db.read_cache(patient_id, stage)
+        db.write_job(job_id, status)
+        db.write_provenance(prov_dict)
+        db.discard()   ← called in finally block, always
     """
 
-    # Fallback in-memory store when Ghost CLI not available
+    # In-memory fallback when Ghost not available/authed
     _fallback: dict = {}
 
     def __init__(self, run_id: str, db_id: str, conn_string: str, using_ghost: bool):
@@ -63,24 +85,46 @@ class GhostDB:
         self.using_ghost = using_ghost
         self._conn       = None
 
-    # ── Construction ────────────────────────────────────────────────────────
+    # ── Construction ─────────────────────────────────────────────────────────
 
     @classmethod
-    def fork(cls, run_id: str) -> "GhostDB":
-        """Fork a new Ghost DB for this run_id. Falls back to memory if CLI absent."""
-        if not _ghost_available():
-            print(f"  [Ghost] CLI not found — using in-memory fallback for run {run_id}")
-            return cls(run_id, run_id, "", using_ghost=False)
+    def create(cls, run_id: str) -> "GhostDB":
+        """
+        Spin up a fresh Ghost DB for this run.
+        Falls back to in-memory dict if Ghost is unavailable or not logged in.
+        """
+        if not _ghost_authed():
+            print(f"  [Ghost] Not available/authed — using in-memory fallback for run {run_id}")
+            return cls(run_id, f"memory-{run_id}", "", using_ghost=False)
 
         name = f"datagrid-{run_id}"
-        print(f"  [Ghost] Forking DB: {name}")
-        info = _ghost_cmd("create", "--name", name, "--wait")
-        db_id       = info.get("id", run_id)
-        conn_string = info.get("connection_string") or info.get("connectionString", "")
+        print(f"  [Ghost] Creating DB: {name} ...")
+
+        # Step 1: create and get the db ID
+        raw  = _ghost("create", "--name", name, "--wait", "--json")
+        info = json.loads(raw)
+        db_id = info.get("id") or info.get("database_id") or info.get("name", name)
+
+        # Step 2: get the postgres connection string via ghost connect
+        print(f"  [Ghost] Fetching connection string for {db_id} ...")
+        conn_string = _ghost("connect", db_id).strip()
+        # ghost connect may return "postgresql://..." or print it in a message
+        # extract the URI if it's embedded in a longer string
+        if "postgresql://" in conn_string:
+            for part in conn_string.split():
+                if part.startswith("postgresql://"):
+                    conn_string = part
+                    break
+        elif "postgres://" in conn_string:
+            for part in conn_string.split():
+                if part.startswith("postgres://"):
+                    conn_string = part
+                    break
+
         print(f"  [Ghost] DB ready: {db_id}")
         return cls(run_id, db_id, conn_string, using_ghost=True)
 
-    # ── Connection ──────────────────────────────────────────────────────────
+    # ── Connection ────────────────────────────────────────────────────────────
 
     def _get_conn(self):
         if not self.using_ghost:
@@ -88,10 +132,10 @@ class GhostDB:
         if self._conn is None or self._conn.closed:
             self._conn = psycopg2.connect(self.conn_string)
             self._conn.autocommit = True
-            self._ensure_schema()
+            self._init_schema()
         return self._conn
 
-    def _ensure_schema(self):
+    def _init_schema(self):
         with self._conn.cursor() as cur:
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS patient_cache (
@@ -103,39 +147,37 @@ class GhostDB:
                     PRIMARY KEY (run_id, patient_id, stage)
                 );
                 CREATE TABLE IF NOT EXISTS pipeline_jobs (
-                    job_id      TEXT PRIMARY KEY,
-                    run_id      TEXT,
-                    status      TEXT,
-                    data        JSONB,
-                    updated_at  TIMESTAMPTZ DEFAULT NOW()
+                    job_id     TEXT PRIMARY KEY,
+                    run_id     TEXT,
+                    status     TEXT,
+                    data       JSONB,
+                    updated_at TIMESTAMPTZ DEFAULT NOW()
                 );
                 CREATE TABLE IF NOT EXISTS omop_provenance (
-                    run_id      TEXT PRIMARY KEY,
-                    data        JSONB,
-                    written_at  TIMESTAMPTZ DEFAULT NOW()
+                    run_id     TEXT PRIMARY KEY,
+                    data       JSONB,
+                    written_at TIMESTAMPTZ DEFAULT NOW()
                 );
             """)
 
-    # ── Cache operations ─────────────────────────────────────────────────────
+    # ── Cache ─────────────────────────────────────────────────────────────────
 
     def write_cache(self, patient_id: str, stage: str, data: dict):
         if not self.using_ghost:
-            key = (self.run_id, patient_id, stage)
-            GhostDB._fallback[key] = data
+            GhostDB._fallback[(self.run_id, patient_id, stage)] = data
             return
-        conn = self._get_conn()
-        with conn.cursor() as cur:
+        with self._get_conn().cursor() as cur:
             cur.execute("""
                 INSERT INTO patient_cache (run_id, patient_id, stage, data)
                 VALUES (%s, %s, %s, %s)
-                ON CONFLICT (run_id, patient_id, stage) DO UPDATE SET data = EXCLUDED.data
+                ON CONFLICT (run_id, patient_id, stage)
+                DO UPDATE SET data = EXCLUDED.data
             """, (self.run_id, patient_id, stage, json.dumps(data)))
 
     def read_cache(self, patient_id: str, stage: str) -> dict | None:
         if not self.using_ghost:
             return GhostDB._fallback.get((self.run_id, patient_id, stage))
-        conn = self._get_conn()
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        with self._get_conn().cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute("""
                 SELECT data FROM patient_cache
                 WHERE run_id=%s AND patient_id=%s AND stage=%s
@@ -143,19 +185,18 @@ class GhostDB:
             row = cur.fetchone()
         return dict(row["data"]) if row else None
 
-    # ── Job store ────────────────────────────────────────────────────────────
+    # ── Job store ─────────────────────────────────────────────────────────────
 
     def write_job(self, job_id: str, status_dict: dict):
         if not self.using_ghost:
             GhostDB._fallback[("job", job_id)] = status_dict
             return
-        conn = self._get_conn()
-        with conn.cursor() as cur:
+        with self._get_conn().cursor() as cur:
             cur.execute("""
                 INSERT INTO pipeline_jobs (job_id, run_id, status, data)
                 VALUES (%s, %s, %s, %s)
-                ON CONFLICT (job_id) DO UPDATE
-                  SET status=%s, data=EXCLUDED.data, updated_at=NOW()
+                ON CONFLICT (job_id)
+                DO UPDATE SET status=%s, data=EXCLUDED.data, updated_at=NOW()
             """, (
                 job_id, self.run_id,
                 status_dict.get("status", "unknown"),
@@ -166,60 +207,64 @@ class GhostDB:
     def read_job(self, job_id: str) -> dict | None:
         if not self.using_ghost:
             return GhostDB._fallback.get(("job", job_id))
-        conn = self._get_conn()
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        with self._get_conn().cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute("SELECT data FROM pipeline_jobs WHERE job_id=%s", (job_id,))
             row = cur.fetchone()
         return dict(row["data"]) if row else None
 
-    # ── Provenance ───────────────────────────────────────────────────────────
+    # ── Provenance ────────────────────────────────────────────────────────────
 
     def write_provenance(self, data: dict):
         if not self.using_ghost:
             GhostDB._fallback[("provenance", self.run_id)] = data
             return
-        conn = self._get_conn()
-        with conn.cursor() as cur:
+        with self._get_conn().cursor() as cur:
             cur.execute("""
                 INSERT INTO omop_provenance (run_id, data)
                 VALUES (%s, %s)
                 ON CONFLICT (run_id) DO UPDATE SET data=EXCLUDED.data, written_at=NOW()
             """, (self.run_id, json.dumps(data)))
 
-    # ── Teardown ─────────────────────────────────────────────────────────────
+    # ── Discard ───────────────────────────────────────────────────────────────
 
     def discard(self):
-        """Close connection and delete the Ghost DB."""
+        """Close psycopg2 connection and delete the Ghost DB. Always safe to call."""
         if self._conn and not self._conn.closed:
-            self._conn.close()
+            try:
+                self._conn.close()
+            except Exception:
+                pass
+
         if not self.using_ghost:
             # Clear in-memory fallback for this run
-            keys_to_del = [k for k in GhostDB._fallback if isinstance(k, tuple) and k[0] == self.run_id]
-            for k in keys_to_del:
+            stale = [k for k in GhostDB._fallback
+                     if isinstance(k, tuple) and len(k) >= 1 and k[0] == self.run_id]
+            for k in stale:
                 del GhostDB._fallback[k]
             return
+
         try:
-            print(f"  [Ghost] Discarding DB: {self.db_id}")
-            subprocess.run(["ghost", "delete", self.db_id, "--confirm"], check=True)
-            print(f"  [Ghost] DB {self.db_id} deleted.")
+            print(f"  [Ghost] Deleting DB: {self.db_id}")
+            _ghost("delete", self.db_id, "--confirm")
+            print(f"  [Ghost] DB {self.db_id} deleted ✓")
         except Exception as e:
-            print(f"  [Ghost] Warning: could not delete DB {self.db_id}: {e}")
+            print(f"  [Ghost] Warning: could not delete {self.db_id}: {e}")
 
 
 # ---------------------------------------------------------------------------
-# Global run registry (maps run_id → GhostDB instance)
+# Run registry
 # ---------------------------------------------------------------------------
 
-_active_dbs: dict[str, GhostDB] = {}
+_active: dict[str, GhostDB] = {}
 
 
-def get_or_fork(run_id: str) -> GhostDB:
-    if run_id not in _active_dbs:
-        _active_dbs[run_id] = GhostDB.fork(run_id)
-    return _active_dbs[run_id]
+def get_or_create(run_id: str) -> GhostDB:
+    if run_id not in _active:
+        _active[run_id] = GhostDB.create(run_id)
+    return _active[run_id]
 
 
 def close_run(run_id: str):
-    db = _active_dbs.pop(run_id, None)
+    db = _active.pop(run_id, None)
     if db:
         db.discard()

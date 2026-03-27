@@ -20,7 +20,7 @@ from functools import wraps
 AUTH0_DOMAIN        = os.getenv("AUTH0_DOMAIN",        "dev-jxq256ergu25vtkp.us.auth0.com")
 AUTH0_CLIENT_ID     = os.getenv("AUTH0_CLIENT_ID",     "73p8ARbfOCVB1r8JPsINEsUNbOS2ulBC")
 AUTH0_CLIENT_SECRET = os.getenv("AUTH0_CLIENT_SECRET", "")
-AUTH0_AUDIENCE      = os.getenv("AUTH0_AUDIENCE",      "https://api.datagrid.dev")
+AUTH0_AUDIENCE      = os.getenv("AUTH0_AUDIENCE",      "https://dev-jxq256ergu25vtkp.us.auth0.com/api/v2/")
 
 # Agent → allowed scopes
 AGENT_SCOPES: dict[str, list[str]] = {
@@ -54,13 +54,14 @@ def get_token(agent_name: str) -> str:
         print(f"  [Auth0] No client secret — running in no-auth dev mode for {agent_name}")
         return "dev-no-auth"
 
-    scopes = " ".join(AGENT_SCOPES[agent_name])
+    # AGENT_SCOPES defines the logical access policy per agent (used for audit/docs).
+    # The Auth0 Management API issues its own scopes — we don't pass custom ones.
+    logical_scopes = AGENT_SCOPES[agent_name]
     payload = {
         "grant_type":    "client_credentials",
         "client_id":     AUTH0_CLIENT_ID,
         "client_secret": AUTH0_CLIENT_SECRET,
         "audience":      AUTH0_AUDIENCE,
-        "scope":         scopes,
     }
     url = f"https://{AUTH0_DOMAIN}/oauth/token"
     resp = requests.post(url, json=payload, timeout=10)
@@ -73,7 +74,7 @@ def get_token(agent_name: str) -> str:
         "token":      token,
         "expires_at": time.time() + expires_in,
     }
-    print(f"  [Auth0] Token issued for {agent_name} — scopes: {scopes}")
+    print(f"  [Auth0] Token issued for {agent_name} — logical scopes: {logical_scopes}")
     return token
 
 

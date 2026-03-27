@@ -21,7 +21,7 @@ from agents.modality_agent     import assess_all
 from agents.harmonization_agent import harmonize_all
 from agents.validation_agent   import validate_all
 from agents.output_agent       import write_output
-from db.ghost_client           import get_or_fork, close_run
+from db.ghost_client           import get_or_create, close_run
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "synthetic")
 
@@ -44,7 +44,7 @@ def run(data_dir: str = None, force_rerun: bool = False, verbose: bool = True) -
 
     # ── Fork Ghost DB ────────────────────────────────────────────────────────
     print(f"\n[Ghost] Forking DB for run {run_id}...")
-    db = get_or_fork(run_id)
+    db = get_or_create(run_id)
 
     try:
         # ── Step 1: Ingest via Airbyte ───────────────────────────────────────

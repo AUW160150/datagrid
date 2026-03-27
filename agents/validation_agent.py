@@ -19,8 +19,10 @@ try:
 except ImportError:
     _OVERCLAW = False
 
-MODEL      = "gpt-4o"
-MAX_TOKENS = 8000
+MODEL          = "llama-3.3-70b-versatile"
+MODEL_OVERCLAW = "groq/llama-3.3-70b-versatile"
+MAX_TOKENS     = 8000
+GROQ_BASE      = "https://api.groq.com/openai/v1"
 
 SYSTEM_PROMPT = """You are datagrid Validator — a second-opinion clinical coding agent.
 
@@ -154,25 +156,31 @@ def _parse_json(raw: str) -> dict:
 
 
 def _call_model(user_prompt: str) -> str:
-    if _OVERCLAW:
-        return call_llm(
-            model=MODEL,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user",   "content": user_prompt},
-            ]
-        )
-    from openai import OpenAI
-    client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
-    resp = client.chat.completions.create(
-        model=MODEL,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user",   "content": user_prompt},
-        ],
-        max_tokens=MAX_TOKENS,
-    )
-    return resp.choices[0].message.content
+    import time, re
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user",   "content": user_prompt},
+    ]
+    for attempt in range(6):
+        try:
+            if _OVERCLAW:
+                resp = call_llm(model=MODEL_OVERCLAW, messages=messages)
+                return resp.choices[0].message.content if hasattr(resp, "choices") else str(resp)
+            from openai import OpenAI
+            client = OpenAI(api_key=os.environ["GROQ_API_KEY"], base_url=GROQ_BASE)
+            resp = client.chat.completions.create(
+                model=MODEL, messages=messages, max_tokens=MAX_TOKENS,
+            )
+            return resp.choices[0].message.content
+        except Exception as e:
+            msg = str(e)
+            if "429" in msg or "rate_limit" in msg.lower() or "RateLimitError" in type(e).__name__:
+                match = re.search(r"try again in (\d+\.?\d*)s", msg)
+                wait = float(match.group(1)) + 2 if match else (2 ** attempt) * 10
+                print(f"  [Validation] Rate limit — waiting {wait:.0f}s (attempt {attempt+1}/6)...")
+                time.sleep(wait)
+            else:
+                raise
 
 
 @require_token("validation-agent")
