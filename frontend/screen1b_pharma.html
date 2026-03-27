@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>BioHarmonize — Pharma Dashboard</title>
+  <title>datagrid — Pharma Dashboard</title>
   <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -334,6 +334,207 @@ const DATASETS = [
     seeking: 'South Asian cardiovascular disease, secondary prevention, statin pharmacogenomics',
   },
 ];
+
+// ── US Pharma buyer profiles for hospital matching ────────────────────────────
+const PHARMA_BUYERS = [
+  {
+    company: 'Novo Nordisk',
+    abbr: 'NN',
+    color: '#0052CC',
+    focus: 'T2DM Pharmacogenomics',
+    budget: '$200K–$350K / yr',
+    seeking: 'South Asian T2DM cohort with HbA1c, fasting glucose, and TCF7L2/PCSK9 pharmacogenomics variants',
+    matches: [
+      { id:'BH-2024-0047', hospital:'SSKM Kolkata', title:'South Asian T2DM Cohort — West Bengal', score:0.91, reason:'TCF7L2 + PCSK9 variants, HbA1c series, Bengali/English multi-modal', contact:'Dr. Priya Sharma' },
+      { id:'BH-2024-0039', hospital:'Fortis Memorial', title:'Delhi NCR Metabolic Syndrome Registry', score:0.78, reason:'T2DM + dyslipidemia ICD codes, Hindi EHR, N=24', contact:'Dr. Rajesh Gupta' },
+    ],
+  },
+  {
+    company: 'AstraZeneca',
+    abbr: 'AZ',
+    color: '#9900CC',
+    focus: 'CVD Risk + Genomics',
+    budget: '$180K–$280K / yr',
+    seeking: 'Cardiovascular disease cohort with lipid genomics (APOE, PCSK9), South Asian population, OMOP CDM',
+    matches: [
+      { id:'BH-2024-0047', hospital:'SSKM Kolkata', title:'South Asian T2DM Cohort — West Bengal', score:0.84, reason:'APOE4, PCSK9 variants, ICD I10 hypertension, full lipid panel present', contact:'Dr. Priya Sharma' },
+      { id:'BH-2024-0041', hospital:'CMC Vellore', title:'Tamil Nadu Cardiovascular Registry', score:0.79, reason:'ICD I25 CAD, statin prescriptions, N=31, OMOP CDM harmonized', contact:'Dr. Anil Verma' },
+    ],
+  },
+  {
+    company: 'IQVIA',
+    abbr: 'IQ',
+    color: '#CC6600',
+    focus: 'South Asian Genomic Reference Panel',
+    budget: '$100K–$180K / yr',
+    seeking: 'Multi-lingual EHR with matched VCF variants for South Asian genomic reference panel construction',
+    matches: [
+      { id:'BH-2024-0047', hospital:'SSKM Kolkata', title:'South Asian T2DM Cohort — West Bengal', score:0.78, reason:'Bengali + English notes, 12.4 avg variants/patient, OMOP CDM v5.4', contact:'Dr. Priya Sharma' },
+      { id:'BH-2024-0031', hospital:'BIRDEM General', title:'Bangladesh Urban Diabetes Surveillance', score:0.65, reason:'Bengali clinical notes, N=18, real-world outpatient', contact:'Dr. Farhan Hossain' },
+    ],
+  },
+  {
+    company: 'Roche / Genentech',
+    abbr: 'RG',
+    color: '#CC0033',
+    focus: 'CKD Precision Medicine',
+    budget: '$150K–$250K / yr',
+    seeking: 'Chronic kidney disease progression with eGFR staging, pharmacogenomics, real-world South Asian cohort',
+    matches: [
+      { id:'BH-2024-0031', hospital:'BIRDEM General', title:'Bangladesh Urban Diabetes Surveillance', score:0.72, reason:'N18.3 CKD with eGFR 58, real-world T2DM + renal endpoints', contact:'Dr. Farhan Hossain' },
+      { id:'BH-2024-0047', hospital:'SSKM Kolkata', title:'South Asian T2DM Cohort — West Bengal', score:0.68, reason:'Full modality coverage, CKD-adjacent diagnoses, OMOP harmonized', contact:'Dr. Priya Sharma' },
+    ],
+  },
+];
+
+// ── Hospital → US Pharma Recommendation View ─────────────────────────────────
+function HospitalMatchesView() {
+  const [contacted, setContacted] = useState({});
+  const scoreColor = s => s >= 0.85 ? '#059669' : s >= 0.75 ? '#0D9488' : '#D97706';
+
+  return (
+    <div>
+      <div style={{ marginBottom:24 }}>
+        <h1 style={{ fontFamily:'Playfair Display', fontSize:24, fontWeight:600, color:C.primary }}>
+          Hospital → US Pharma Recommendations
+        </h1>
+        <p style={{ fontSize:13.5, color:C.muted, marginTop:4 }}>
+          AI-matched hospital datasets to active US pharma research requests · updated daily
+        </p>
+      </div>
+
+      {/* Stats bar */}
+      <div style={{ display:'flex', gap:14, marginBottom:24, flexWrap:'wrap' }}>
+        {[
+          { label:'Active Pharma Buyers', value:'127', color:C.accent },
+          { label:'Hospital Datasets Ready', value:'43', color:C.success },
+          { label:'Avg Match Score', value:'0.82', color:'#6200EA' },
+          { label:'Deals Closed (90d)', value:'$4.2M', color:C.primary },
+        ].map(s => (
+          <div key={s.label} style={{ flex:1, minWidth:130, background:C.surface,
+            border:`1px solid ${C.border}`, borderRadius:10, padding:'14px 16px' }}>
+            <div style={{ fontFamily:'DM Mono', fontSize:20, fontWeight:500, color:s.color }}>{s.value}</div>
+            <div style={{ fontSize:11.5, color:C.muted, marginTop:3 }}>{s.label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Pharma buyer cards */}
+      <div style={{ display:'flex', flexDirection:'column', gap:18 }}>
+        {PHARMA_BUYERS.map((buyer, bi) => (
+          <div key={buyer.company} className="card"
+            style={{ padding:0, overflow:'hidden', animation:`fadeUp 0.45s ease ${bi*0.08}s both`, opacity:0 }}>
+
+            {/* Header */}
+            <div style={{ padding:'16px 20px', borderBottom:`1px solid ${C.border}`,
+              display:'flex', alignItems:'center', justifyContent:'space-between', flexWrap:'wrap', gap:12 }}>
+              <div style={{ display:'flex', alignItems:'center', gap:12 }}>
+                <div style={{ width:36, height:36, borderRadius:9, background:buyer.color,
+                  display:'flex', alignItems:'center', justifyContent:'center',
+                  fontSize:12, fontWeight:700, color:'white', flexShrink:0 }}>
+                  {buyer.abbr}
+                </div>
+                <div>
+                  <div style={{ fontSize:15, fontWeight:700, color:C.primary }}>{buyer.company}</div>
+                  <div style={{ fontSize:12, color:C.muted }}>{buyer.focus}</div>
+                </div>
+              </div>
+              <div style={{ display:'flex', alignItems:'center', gap:14, flexWrap:'wrap' }}>
+                <div style={{ fontSize:12, color:C.muted }}>
+                  Budget: <span style={{ fontFamily:'DM Mono', fontSize:12.5, color:C.primary, fontWeight:500 }}>
+                    {buyer.budget}
+                  </span>
+                </div>
+                <span style={{ fontSize:11, padding:'3px 9px', borderRadius:6, fontWeight:600,
+                  background:'rgba(13,148,136,0.08)', border:'1px solid rgba(13,148,136,0.2)', color:C.accent }}>
+                  Active RFQ
+                </span>
+              </div>
+            </div>
+
+            {/* Seeking */}
+            <div style={{ padding:'12px 20px', background:C.surface2, borderBottom:`1px solid ${C.border}` }}>
+              <span style={{ fontSize:11.5, fontWeight:600, color:C.subtle,
+                textTransform:'uppercase', letterSpacing:'0.07em', marginRight:8 }}>Seeking:</span>
+              <span style={{ fontSize:12.5, color:C.muted }}>{buyer.seeking}</span>
+            </div>
+
+            {/* Match rows */}
+            <div>
+              {buyer.matches.map((m, mi) => (
+                <div key={m.id} style={{
+                  padding:'14px 20px',
+                  borderBottom: mi < buyer.matches.length - 1 ? `1px solid ${C.border}` : 'none',
+                  display:'flex', alignItems:'center', gap:14, flexWrap:'wrap',
+                }}>
+                  {/* Score badge */}
+                  <div style={{ width:48, height:48, borderRadius:10, flexShrink:0,
+                    background: `${scoreColor(m.score)}15`,
+                    border: `1px solid ${scoreColor(m.score)}30`,
+                    display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center' }}>
+                    <span style={{ fontFamily:'DM Mono', fontSize:14, fontWeight:600, color:scoreColor(m.score),
+                      lineHeight:1 }}>{Math.round(m.score*100)}</span>
+                    <span style={{ fontSize:9, color:C.subtle }}>match</span>
+                  </div>
+
+                  {/* Hospital info */}
+                  <div style={{ flex:1, minWidth:200 }}>
+                    <div style={{ fontSize:13.5, fontWeight:600, color:C.primary, marginBottom:2 }}>
+                      🏥 {m.hospital}
+                    </div>
+                    <div style={{ fontSize:12.5, color:C.muted, marginBottom:4 }}>{m.title}</div>
+                    <div style={{ fontSize:11.5, color:C.subtle, fontStyle:'italic' }}>{m.reason}</div>
+                  </div>
+
+                  {/* Score bar + CTA */}
+                  <div style={{ display:'flex', flexDirection:'column', alignItems:'flex-end', gap:8, flexShrink:0 }}>
+                    <div style={{ width:120, height:5, background:C.surface2, borderRadius:3, overflow:'hidden' }}>
+                      <div style={{ height:'100%', width:`${m.score*100}%`, borderRadius:3,
+                        background:scoreColor(m.score), transition:'width 1s ease' }}/>
+                    </div>
+                    <div style={{ display:'flex', gap:8 }}>
+                      <span style={{ fontFamily:'DM Mono', fontSize:11, color:C.subtle }}>
+                        Contact: {m.contact}
+                      </span>
+                      <button
+                        onClick={() => setContacted(c => ({ ...c, [`${buyer.company}-${m.id}`]: true }))}
+                        style={{
+                          padding:'5px 12px', borderRadius:7, border:'none', cursor:'pointer',
+                          fontFamily:'DM Sans', fontSize:12, fontWeight:600, transition:'all 0.15s',
+                          background: contacted[`${buyer.company}-${m.id}`] ? '#059669' : buyer.color,
+                          color:'white',
+                        }}>
+                        {contacted[`${buyer.company}-${m.id}`] ? '✓ Sent' : 'Intro Request'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Marketplace CTA */}
+      <div style={{ marginTop:24, padding:'20px 24px', background:'rgba(13,148,136,0.04)',
+        border:'1px solid rgba(13,148,136,0.2)', borderRadius:12 }}>
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', flexWrap:'wrap', gap:12 }}>
+          <div>
+            <div style={{ fontSize:14, fontWeight:600, color:C.primary, marginBottom:4 }}>
+              Your hospital not listed? List your dataset on the Open Marketplace.
+            </div>
+            <div style={{ fontSize:12.5, color:C.muted }}>
+              127 active pharma buyers are searching for South Asian clinical data right now.
+            </div>
+          </div>
+          <button className="btn-primary" onClick={() => window.location.href='screen1a_hospital.html'}>
+            Submit Dataset →
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ── Mini radar (4-axis) ───────────────────────────────────────────────────────
 function MiniRadar({ dims, score, scoreColor, size = 68 }) {
@@ -686,7 +887,7 @@ function NoMatchPanel({ onPostMarketplace, geoBlock }) {
           justifyContent:'center', fontSize:15, flexShrink:0 }}>⚠</div>
         <div>
           <p style={{ fontSize:14, fontWeight:700, color:'#92400E', marginBottom:2 }}>
-            {geoBlock ? 'Geography not covered — BioHarmonize is South Asia only' : 'No exact match in current marketplace'}
+            {geoBlock ? 'Geography not covered — datagrid is South Asia only' : 'No exact match in current marketplace'}
           </p>
           <p style={{ fontSize:13, color:'#78716C', lineHeight:1.5 }}>
             {geoBlock
@@ -766,6 +967,7 @@ const NON_SA_GEO = /\b(chinese|china|han|east.asian|european|caucasian|white|afr
 
 // ── Main App ──────────────────────────────────────────────────────────────────
 function App() {
+  const [pharmaView, setPharmaView] = useState('browse'); // 'browse' | 'hospital-matches'
   const [mode, setMode]         = useState('nl');       // 'nl' | 'structured'
   const [nlQuery, setNlQuery]   = useState('');
   const [nlTyped, setNlTyped]   = useState('');
@@ -862,7 +1064,7 @@ function App() {
             </svg>
           </div>
           <span style={{ fontFamily:'Playfair Display', fontSize:15, fontWeight:600, color:C.primary }}>
-            BioHarmonize
+            datagrid
           </span>
         </div>
 
@@ -923,20 +1125,30 @@ function App() {
           </p>
 
           {[
-            { label:'Browse Datasets', icon:'search', active:true },
-            { label:'My Requests (3)', icon:'file', active:false },
-            { label:'Purchased Data', icon:'lock', active:false },
-            { label:'Spend Analytics', icon:'chart', active:false },
+            { label:'Browse Datasets', icon:'search', view:'browse' },
+            { label:'Hospital Matches', icon:'match', view:'hospital-matches' },
+            { label:'My Requests (3)', icon:'file', view:null },
+            { label:'Purchased Data', icon:'lock', view:null },
+            { label:'Spend Analytics', icon:'chart', view:null },
           ].map(item => (
-            <button key={item.label} className={`nav-link ${item.active?'active':''}`}
-              style={{ width:'100%', justifyContent:'flex-start', padding:'8px 10px' }}>
+            <button key={item.label}
+              className={`nav-link ${pharmaView===item.view?'active':''}`}
+              style={{ width:'100%', justifyContent:'flex-start', padding:'8px 10px' }}
+              onClick={() => item.view && setPharmaView(item.view)}>
               <span style={{ width:14, height:14, flexShrink:0 }}>
                 {item.icon === 'search' && <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="6" cy="6" r="4.5" stroke="currentColor" strokeWidth="1.4"/><path d="M9.5 9.5L12.5 12.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>}
+                {item.icon === 'match' && <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M1 7c0-3.3 2.7-6 6-6s6 2.7 6 6-2.7 6-6 6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/><path d="M4.5 7l2 2 3-3.5" stroke="#0D9488" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>}
                 {item.icon === 'file' && <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="2" y="1" width="10" height="12" rx="2" stroke="currentColor" strokeWidth="1.4"/><path d="M4.5 5.5h5M4.5 8h3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/></svg>}
                 {item.icon === 'lock' && <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="2.5" y="6" width="9" height="7" rx="2" stroke="currentColor" strokeWidth="1.4"/><path d="M4.5 6V4.5a2.5 2.5 0 015 0V6" stroke="currentColor" strokeWidth="1.4"/></svg>}
                 {item.icon === 'chart' && <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="7" width="3" height="5" rx="1" fill="currentColor" fillOpacity="0.5"/><rect x="5.5" y="4" width="3" height="8" rx="1" fill="currentColor" fillOpacity="0.7"/><rect x="10" y="1.5" width="3" height="10.5" rx="1" fill="currentColor"/></svg>}
               </span>
               {item.label}
+              {item.view === 'hospital-matches' && (
+                <span style={{ marginLeft:'auto', fontSize:9.5, padding:'1px 5px', borderRadius:4,
+                  background:'rgba(13,148,136,0.1)', color:C.accent, fontWeight:600, fontFamily:'DM Mono' }}>
+                  4 buyers
+                </span>
+              )}
             </button>
           ))}
 
@@ -993,6 +1205,11 @@ function App() {
 
         {/* ── Main content ───────────────────────────────────────────────── */}
         <main style={{ flex:1, overflowY:'auto', padding:28 }}>
+
+          {/* Hospital Matches view */}
+          {pharmaView === 'hospital-matches' && <HospitalMatchesView/>}
+
+          {pharmaView === 'browse' && <>
           {/* Header */}
           <div className="anim-1" style={{ marginBottom:24 }}>
             <h1 style={{ fontFamily:'Playfair Display', fontSize:24, fontWeight:600, color:C.primary }}>
@@ -1226,6 +1443,7 @@ function App() {
               </p>
             </div>
           )}
+          </>}
         </main>
 
         {/* ── Right sidebar ───────────────────────────────────────────────── */}
