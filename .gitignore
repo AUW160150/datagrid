@@ -1,0 +1,12 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+output/cache/
+output/*.parquet
+output/provenance/
+output/pipeline_provenance.json
+.overclaw/
+*.egg-info/
+dist/
