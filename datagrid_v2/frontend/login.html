@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>clingrid — Secure Access</title>
+  <script src="https://cdn.auth0.com/js/auth0-spa-js/2.0/auth0-spa-js.production.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #0a0a0f;
+      color: #e8eaf6;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .card {
+      background: #12121a;
+      border: 1px solid #1e1e2e;
+      border-radius: 16px;
+      padding: 48px 40px;
+      width: 420px;
+      text-align: center;
+    }
+    .logo {
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: -1px;
+      margin-bottom: 8px;
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .tagline {
+      font-size: 13px;
+      color: #6b7280;
+      margin-bottom: 36px;
+    }
+    .badge-row {
+      display: flex;
+      gap: 8px;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin-bottom: 32px;
+    }
+    .badge {
+      font-size: 11px;
+      padding: 3px 10px;
+      border-radius: 999px;
+      border: 1px solid;
+    }
+    .badge-ghost   { color: #a78bfa; border-color: #a78bfa33; }
+    .badge-auth0   { color: #34d399; border-color: #34d39933; }
+    .badge-airbyte { color: #60a5fa; border-color: #60a5fa33; }
+    .badge-overclaw { color: #f472b6; border-color: #f472b633; }
+    .btn {
+      width: 100%;
+      padding: 14px;
+      border-radius: 10px;
+      border: none;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      color: white;
+    }
+    .btn-primary:hover { opacity: 0.9; transform: translateY(-1px); }
+    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+    .consent-box {
+      background: #0d0d14;
+      border: 1px solid #1e1e2e;
+      border-radius: 10px;
+      padding: 16px;
+      margin-bottom: 24px;
+      text-align: left;
+    }
+    .consent-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: #9ca3af;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 10px;
+    }
+    .consent-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      margin-bottom: 8px;
+      font-size: 12px;
+      color: #6b7280;
+    }
+    .consent-item .icon { color: #6366f1; flex-shrink: 0; margin-top: 1px; }
+    .user-info {
+      display: none;
+      margin-bottom: 20px;
+      padding: 12px;
+      background: #0d0d14;
+      border: 1px solid #1e1e2e;
+      border-radius: 8px;
+      font-size: 13px;
+      color: #9ca3af;
+    }
+    .user-email { color: #e8eaf6; font-weight: 600; }
+    #status { font-size: 12px; color: #6b7280; margin-top: 14px; min-height: 18px; }
+    .error { color: #f87171 !important; }
+  </style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">clingrid</div>
+  <div class="tagline">Clinical Data Harmonization Pipeline</div>
+
+  <div class="badge-row">
+    <span class="badge badge-ghost">Ghost DB</span>
+    <span class="badge badge-auth0">Auth0</span>
+    <span class="badge badge-airbyte">Airbyte</span>
+    <span class="badge badge-overclaw">OverClaw</span>
+  </div>
+
+  <div class="consent-box">
+    <div class="consent-title">Patient Consent & Data Access</div>
+    <div class="consent-item">
+      <span class="icon">🔐</span>
+      <span>Your session is scoped — each agent can only access what it's authorized for</span>
+    </div>
+    <div class="consent-item">
+      <span class="icon">🗄️</span>
+      <span>Processed records are stored in an ephemeral Ghost DB, discarded after output</span>
+    </div>
+    <div class="consent-item">
+      <span class="icon">📋</span>
+      <span>All ICD-10 decisions are traced and auditable via OverClaw</span>
+    </div>
+    <div class="consent-item">
+      <span class="icon">✅</span>
+      <span>Logging in constitutes your consent to process records under this pipeline</span>
+    </div>
+  </div>
+
+  <div class="user-info" id="user-info">
+    Logged in as <span class="user-email" id="user-email"></span>
+  </div>
+
+  <button class="btn btn-primary" id="login-btn" onclick="handleLogin()">
+    Login with Auth0
+  </button>
+  <button class="btn btn-primary" id="continue-btn" style="display:none" onclick="continueToPipeline()">
+    Continue to Pipeline →
+  </button>
+
+  <div id="status"></div>
+</div>
+
+<script>
+  const AUTH0_DOMAIN    = "dev-jxq256ergu25vtkp.us.auth0.com";
+  const AUTH0_CLIENT_ID = "73p8ARbfOCVB1r8JPsINEsUNbOS2ulBC";
+  const AUTH0_AUDIENCE  = "https://dev-jxq256ergu25vtkp.us.auth0.com/api/v2/";
+
+  let auth0Client = null;
+
+  async function initAuth0() {
+    try {
+      auth0Client = await auth0.createAuth0Client({
+        domain:       AUTH0_DOMAIN,
+        clientId:     AUTH0_CLIENT_ID,
+        authorizationParams: {
+          audience:    AUTH0_AUDIENCE,
+          scope:       "openid profile email",
+          redirect_uri: window.location.origin + window.location.pathname,
+        },
+      });
+
+      // Handle redirect callback
+      const params = new URLSearchParams(window.location.search);
+      if (params.has("code") && params.has("state")) {
+        setStatus("Completing login...");
+        await auth0Client.handleRedirectCallback();
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+
+      const isAuthenticated = await auth0Client.isAuthenticated();
+      if (isAuthenticated) {
+        await showLoggedIn();
+      } else {
+        document.getElementById("login-btn").disabled = false;
+      }
+    } catch (err) {
+      setStatus("Auth0 init error: " + err.message, true);
+    }
+  }
+
+  async function showLoggedIn() {
+    const user  = await auth0Client.getUser();
+    const token = await auth0Client.getTokenSilently();
+
+    document.getElementById("user-email").textContent = user.email;
+    document.getElementById("user-info").style.display = "block";
+    document.getElementById("login-btn").style.display  = "none";
+    document.getElementById("continue-btn").style.display = "block";
+
+    // Store token for API calls
+    sessionStorage.setItem("clingrid_token", token);
+    setStatus("Authentication successful ✓");
+  }
+
+  async function handleLogin() {
+    const btn = document.getElementById("login-btn");
+    btn.disabled = true;
+    btn.textContent = "Redirecting...";
+    try {
+      await auth0Client.loginWithRedirect();
+    } catch (err) {
+      setStatus("Login failed: " + err.message, true);
+      btn.disabled = false;
+      btn.textContent = "Login with Auth0";
+    }
+  }
+
+  function continueToPipeline() {
+    window.location.href = "screen1a_hospital.html";
+  }
+
+  function setStatus(msg, isError = false) {
+    const el = document.getElementById("status");
+    el.textContent = msg;
+    el.className = isError ? "error" : "";
+  }
+
+  // Init on load
+  initAuth0();
+</script>
+</body>
+</html>
