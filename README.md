@@ -1,4 +1,4 @@
-# datagrid
+# Datagrid
 
 **South Asian clinical data marketplace — hospital data to pharma research, end-to-end.**
 
@@ -15,9 +15,9 @@
 
 ---
 
-## What is datagrid?
+## What is Datagrid?
 
-datagrid connects South Asian hospitals to US pharma research buyers. Hospitals upload raw clinical records (Bengali, Hindi, English — PDF, CSV, VCF). A 5-agent pipeline automatically harmonizes them into OMOP CDM v5.4-compliant Parquet datasets. Pharma buyers browse, search, and purchase matched datasets through a marketplace UI.
+Datagrid connects South Asian hospitals to US pharma research buyers. Hospitals upload raw clinical records (Bengali, Hindi, English — PDF, CSV, VCF). A 5-agent pipeline automatically harmonizes them into OMOP CDM v5.4-compliant Parquet datasets. Pharma buyers browse, search, and purchase matched datasets through a marketplace UI.
 
 **The problem:** South Asian populations are massively underrepresented in clinical research. Hospitals have the data but no way to package or monetize it. Pharma needs this data for trial design and pharmacogenomics research but can't access it.
 
